@@ -2,37 +2,70 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class GeminiService {
-  static const String apiKey = "AIzaSyDA9jc8dZLo9_XpgxQfwg5vkoQwq8JRi5s";
-  static const String apiUrl =
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=AIzaSyDA9jc8dZLo9_XpgxQfwg5vkoQwq8JRi5s";
+  // Provide the key securely via --dart-define=GEMINI_API_KEY=... at build/run time
+  static const String apiKey = String.fromEnvironment('GEMINI_API_KEY');
+
+  static Uri _buildGenerateContentUri() {
+    return Uri.https(
+      'generativelanguage.googleapis.com',
+      '/v1beta/models/gemini-2.0-flash:generateContent',
+      {'key': apiKey},
+    );
+  }
 
   static Future<String> getResponse(String prompt) async {
+    if (apiKey.isEmpty) {
+      return 'Error: Missing API key. Pass it via --dart-define=GEMINI_API_KEY=YOUR_KEY';
+    }
+
     try {
+      final requestBody = jsonEncode({
+        'contents': [
+          {
+            'parts': [
+              {'text': prompt}
+            ]
+          }
+        ]
+      });
+
       final response = await http.post(
-        Uri.parse(apiUrl),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "contents": [
-            {
-              "parts": [
-                {"text": prompt}
-              ]
-            }
-          ]
-        }),
+        _buildGenerateContentUri(),
+        headers: const {
+          'Content-Type': 'application/json',
+        },
+        body: requestBody,
       );
 
-      print("Response Status Code: ${response.statusCode}");
-      print("Response Body: ${response.body}");
-
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return data["candidates"][0]["content"]["parts"][0]["text"];
-      } else {
-        return "Error: ${response.body}";
+        final dynamic data = jsonDecode(response.body);
+
+        // Defensive parsing with null checks
+        final List<dynamic>? candidates = data is Map<String, dynamic>
+            ? data['candidates'] as List<dynamic>?
+            : null;
+        if (candidates == null || candidates.isEmpty) {
+          return 'Error: No candidates returned by API';
+        }
+        final Map<String, dynamic>? content =
+            candidates.first is Map<String, dynamic>
+                ? candidates.first['content'] as Map<String, dynamic>?
+                : null;
+        final List<dynamic>? parts = content?['parts'] as List<dynamic>?;
+        if (parts == null || parts.isEmpty) {
+          return 'Error: No parts in response content';
+        }
+        final dynamic firstPart = parts.first;
+        if (firstPart is Map<String, dynamic> && firstPart['text'] is String) {
+          return firstPart['text'] as String;
+        }
+        return 'Error: Unexpected response shape';
       }
+
+      // Non-200 response: surface message
+      return 'Error ${response.statusCode}: ${response.body}';
     } catch (e) {
-      return "Error: $e";
+      return 'Error: $e';
     }
   }
 }
